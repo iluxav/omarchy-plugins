@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "iluxav.omadesklabel",
+  "name": "Omadesklabel",
+  "version": "0.1.0",
+  "author": "iluxav",
+  "description": "The Omarchy workspace numbers, with a name of your own on each one. Right-click a workspace to label it: 1 becomes 1)omanote.",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Workspaces.qml",
+    "overlay": "Rename.qml"
+  },
+  "barWidget": {
+    "displayName": "Omadesklabel",
+    "description": "Workspace numbers you can name; right-click one to label it",
+    "category": "Compositor",
+    "defaultSection": "left",
+    "allowMultiple": false
+  }
+}

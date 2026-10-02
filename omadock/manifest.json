@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "iluxav.omadock",
+  "name": "Omadock",
+  "version": "0.1.0",
+  "author": "iluxav",
+  "description": "An always-visible side bar of your own app shortcuts, drawn like the Omarchy top bar. The shortcuts live in a small TOML file.",
+  "kinds": ["service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Dock.qml"
+  }
+}

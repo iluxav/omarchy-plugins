@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "iluxav.omamail",
+  "name": "Omamail",
+  "version": "0.1.0",
+  "author": "iluxav",
+  "description": "Gmail in the Omarchy bar: an envelope with your unread count, a dropdown of the unread emails, and a viewer that renders them.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "MailWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omamail",
+    "description": "Unread Gmail count; click for the list, click an email to read it",
+    "category": "Apps",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}

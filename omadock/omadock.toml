@@ -1,0 +1,81 @@
+# omadock: the shortcuts in the side bar.
+#
+# Copied to ~/.config/omadock/omadock.toml the first time the dock loads.
+# Edit that copy; the dock follows it as you save.
+#
+# position   which edge: "left" or "right" (default "left").
+#
+# Each [[app]] is one button, top to bottom:
+#
+#   name    shown when you hover it.
+#   icon    one Nerd Font glyph, like the top bar's icons (https://www.nerdfonts.com/cheat-sheet).
+#   image   instead of a glyph: an icon theme name ("firefox") or an image path.
+#   run     the command a click runs, through bash.
+#   class   optional. A regex matched against open windows' app ids
+#           (`hyprctl clients | grep class`). When set, a dot marks the app as
+#           open, and a click focuses its window instead of starting another.
+#   click   optional. "new" makes a left click always start a new one, even
+#           when the app is already open (the open marker still shows).
+#
+# [[separator]] draws a short line. [[spacer]] pushes everything after it to
+# the far end of the bar.
+#
+# Mouse: left click focuses or launches, middle click always launches a new
+# one, right click opens this file.
+
+position = "left"
+
+[[app]]
+name = "Terminal"
+icon = "󰆍"
+run = "omarchy-launch-terminal"
+class = "^(Alacritty|kitty|foot|com\\.mitchellh\\.ghostty)$"
+
+[[app]]
+name = "Browser"
+icon = "󰖟"
+run = "omarchy-launch-browser"
+click = "new"
+class = "^(chromium|google-chrome|firefox|brave-browser)$"
+
+[[app]]
+name = "Files"
+icon = "󰉋"
+run = "omarchy-launch-nautilus"
+class = "^org\\.gnome\\.Nautilus$"
+
+[[app]]
+name = "Editor"
+icon = "󰨞"
+run = "omarchy-launch-editor"
+
+[[separator]]
+
+[[app]]
+name = "Music"
+icon = "󰓇"
+run = "omarchy-launch-spotify"
+class = "^spotify$"
+
+[[app]]
+name = "Obsidian"
+icon = "󰠮"
+run = "omarchy-launch-or-focus '^obsidian$' obsidian"
+class = "^obsidian$"
+
+[[app]]
+name = "Docker"
+icon = "󰡨"
+run = "omarchy-launch-docker-tui"
+
+[[spacer]]
+
+[[app]]
+name = "Notes"
+icon = "󰎚"
+run = "omarchy-shell shell toggle iluxav.omanote"
+
+[[app]]
+name = "Search"
+icon = "󰍉"
+run = "omarchy-shell shell toggle iluxav.omalight"

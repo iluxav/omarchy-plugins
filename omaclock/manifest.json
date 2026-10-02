@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "iluxav.omaclock",
+  "name": "Omaclock",
+  "version": "0.1.0",
+  "author": "iluxav",
+  "description": "Extra time zones in the bar, next to the Omarchy clock. The zones live in a small YAML file.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "OmaclockWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omaclock",
+    "description": "Extra time zones, e.g. IL 19:41 · NY 12:41",
+    "category": "Time",
+    "defaultSection": "center",
+    "allowMultiple": false
+  }
+}

@@ -1,0 +1,37 @@
+# omaclock: which extra time zones the bar shows.
+#
+# Copied to ~/.config/omaclock/omaclock.yaml the first time the widget loads.
+# Edit that copy; the bar picks up changes as soon as you save.
+# Right-click the widget to open it in your editor.
+#
+# Top level (all optional):
+#
+#   separator       text between zones                     default "  ·  "
+#   format          time format for every zone             default "%H:%M"
+#   tooltipFormat   what the hover tooltip shows           default "%A %d %B %H:%M (%Z)"
+#
+# Each entry under `zones`:
+#
+#   tz        required. An IANA name: Asia/Jerusalem, America/New_York, UTC ...
+#             (`timedatectl list-timezones` prints them all)
+#   label     what to show before the time. Anything goes: "IL", "NYC", "🇮🇱".
+#             Leave it out to use the city from the tz name.
+#   format    overrides the top-level format for this zone only.
+#
+# Formats are strftime codes, as in `date +...`:
+#   %H:%M  24-hour    %I:%M %p  12-hour    %a  short weekday    %d %b  day and month
+#
+# Daylight saving is handled for you.
+
+separator: "  ·  "
+format: "%H:%M"
+
+zones:
+  - label: IL
+    tz: Asia/Jerusalem
+
+  # - label: NYC
+  #   tz: America/New_York
+  #   format: "%I:%M %p"
+  #
+  # - { label: LON, tz: Europe/London }

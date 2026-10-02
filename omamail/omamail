@@ -1,0 +1,374 @@
+#!/usr/bin/python3
+"""omamail: the Gmail side of the omamail bar widget.
+
+  omamail setup           ask for the Gmail address and an app password,
+                          check them, and keep the password in the keyring
+  omamail list [--limit N]
+                          the unread count and the newest unread emails, as JSON
+  omamail open UID        fetch one email, mark it read, and show it in the viewer
+
+It talks to Gmail over IMAP with an app password
+(https://myaccount.google.com/apppasswords). The password lives in the
+system keyring (secret-tool), never in a file. Errors come out as JSON too,
+{"error": kind, "message": ...}, with kind one of "setup", "auth", "network".
+
+/usr/bin/python3 on purpose: the viewer needs the system's PyGObject, which a
+mise or pyenv Python does not have.
+"""
+
+import base64
+import email
+import email.policy
+import getpass
+import html
+import imaplib
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from datetime import datetime
+from email.header import decode_header, make_header
+from email.utils import parseaddr, parsedate_to_datetime
+
+HOST = "imap.gmail.com"
+HERE = os.path.dirname(os.path.realpath(__file__))
+CONFIG_DIR = os.path.expanduser("~/.config/omamail")
+CONFIG = os.path.join(CONFIG_DIR, "config.json")
+CACHE = os.path.expanduser("~/.cache/omamail")
+# Read no more than this of each email for the list: enough for the headers
+# and a first paragraph, without pulling down attachments.
+PEEK = 20000
+
+
+class Failure(Exception):
+    def __init__(self, kind, message):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+
+
+def emit(value):
+    json.dump(value, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+# ---- account ---------------------------------------------------------------
+
+def load_config():
+    try:
+        with open(CONFIG) as f:
+            config = json.load(f)
+        if config.get("email"):
+            return config
+    except (OSError, ValueError):
+        pass
+    raise Failure("setup", "Gmail is not set up yet")
+
+
+def keyring_password(address):
+    try:
+        out = subprocess.run(
+            ["secret-tool", "lookup", "service", "omamail", "account", address],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Failure("setup", "Could not reach the keyring (secret-tool)")
+    password = out.stdout.strip()
+    if out.returncode != 0 or not password:
+        raise Failure("setup", "No app password in the keyring for " + address)
+    return password
+
+
+def login(address, password):
+    try:
+        imap = imaplib.IMAP4_SSL(HOST, timeout=20)
+    except (OSError, socket.timeout) as e:
+        raise Failure("network", "Could not reach Gmail: " + str(e))
+    try:
+        imap.login(address, password)
+    except imaplib.IMAP4.error as e:
+        raise Failure("auth", "Gmail refused the login: " + text_of(e))
+    return imap
+
+
+def connect():
+    config = load_config()
+    return config, login(config["email"], keyring_password(config["email"]))
+
+
+def text_of(value):
+    if isinstance(value, Exception) and value.args:
+        value = value.args[0]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
+# ---- reading emails --------------------------------------------------------
+
+def header(msg, name):
+    value = msg.get(name)
+    if value is None:
+        return ""
+    try:
+        return str(make_header(decode_header(str(value)))).strip()
+    except Exception:
+        return str(value).strip()
+
+
+def sender(msg):
+    name, address = parseaddr(header(msg, "From"))
+    return name or address or "(unknown sender)", address
+
+
+def sent_at(msg):
+    try:
+        when = parsedate_to_datetime(header(msg, "Date"))
+        return when.astimezone() if when.tzinfo else when
+    except Exception:
+        return None
+
+
+def short_date(when):
+    if when is None:
+        return ""
+    now = datetime.now(when.tzinfo)
+    if when.date() == now.date():
+        return when.strftime("%H:%M")
+    if when.year == now.year:
+        return when.strftime("%b %-d")
+    return when.strftime("%b %-d, %Y")
+
+
+def part_text(part):
+    try:
+        payload = part.get_payload(decode=True)
+    except Exception:
+        return ""
+    if payload is None:
+        return ""
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return payload.decode(charset, "replace")
+    except LookupError:
+        return payload.decode("utf-8", "replace")
+
+
+def bodies(msg):
+    """The first text/plain and text/html bodies that are not attachments."""
+    plain, rich = None, None
+    for part in msg.walk():
+        if part.is_multipart() or part.get_content_disposition() == "attachment":
+            continue
+        kind = part.get_content_type()
+        if kind == "text/plain" and plain is None:
+            plain = part_text(part)
+        elif kind == "text/html" and rich is None:
+            rich = part_text(part)
+    return plain, rich
+
+
+def strip_html(markup):
+    markup = re.sub(r"(?is)<(style|script|head|title)\b.*?</\1\s*>", " ", markup)
+    markup = re.sub(r"(?s)<!--.*?-->", " ", markup)
+    markup = re.sub(r"(?s)<[^>]+>", " ", markup)
+    return html.unescape(markup)
+
+
+def snippet(msg):
+    plain, rich = bodies(msg)
+    text = plain if plain and plain.strip() else strip_html(rich or "")
+    # Quoted replies and invisible preheader padding say nothing.
+    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
+    text = re.sub(r"[͏​-‏⁠﻿­]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:200]
+
+
+def gmail_link(address, thread):
+    if not thread:
+        return "https://mail.google.com/mail/u/?authuser=" + address
+    return "https://mail.google.com/mail/u/?authuser=%s#all/%x" % (address, int(thread))
+
+
+def fetched(data):
+    """(uid, thread, raw bytes) for each message in an IMAP FETCH answer."""
+    for item in data:
+        if not isinstance(item, tuple):
+            continue
+        meta = item[0].decode("ascii", "replace")
+        uid = re.search(r"\bUID (\d+)", meta)
+        thread = re.search(r"X-GM-THRID (\d+)", meta)
+        if uid:
+            yield uid.group(1), thread.group(1) if thread else "", item[1]
+
+
+def check(answer, what):
+    status, data = answer
+    if status != "OK":
+        raise Failure("network", "Gmail would not %s: %s" % (what, text_of(data[0] if data else "")))
+    return data
+
+
+# ---- commands --------------------------------------------------------------
+
+def cmd_list(limit):
+    config, imap = connect()
+    try:
+        check(imap.select("INBOX", readonly=True), "open the inbox")
+        uids = check(imap.uid("SEARCH", None, "UNSEEN"), "search")[0].split()
+        newest = uids[-limit:][::-1] if limit > 0 else []
+        messages = []
+        if newest:
+            data = check(imap.uid("FETCH", b",".join(newest), "(X-GM-THRID BODY.PEEK[]<0.%d>)" % PEEK), "fetch")
+            found = {}
+            for uid, thread, raw in fetched(data):
+                msg = email.message_from_bytes(raw, policy=email.policy.compat32)
+                name, address = sender(msg)
+                when = sent_at(msg)
+                found[uid] = {
+                    "uid": uid,
+                    "from": name,
+                    "address": address,
+                    "subject": header(msg, "Subject") or "(no subject)",
+                    "date": short_date(when),
+                    "snippet": snippet(msg),
+                    "link": gmail_link(config["email"], thread),
+                }
+            messages = [found[u.decode()] for u in newest if u.decode() in found]
+        emit({"email": config["email"], "count": len(uids), "messages": messages,
+              "inbox": gmail_link(config["email"], "")})
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def inline_images(msg, markup):
+    """Swap cid: references for data: URIs, so pictures sent inside the email
+    show without letting the page reach the network."""
+    for part in msg.walk():
+        cid = part.get("Content-ID")
+        if not cid or not part.get_content_maintype() == "image":
+            continue
+        data = part.get_payload(decode=True)
+        if not data:
+            continue
+        uri = "data:%s;base64,%s" % (part.get_content_type(), base64.b64encode(data).decode("ascii"))
+        markup = markup.replace("cid:" + cid.strip().strip("<>"), uri)
+    return markup
+
+
+def page(msg):
+    plain, rich = bodies(msg)
+    if rich and rich.strip():
+        return inline_images(msg, rich)
+    text = html.escape(plain or "")
+    text = re.sub(r"(https?://[^\s<>\"]+)", r'<a href="\1">\1</a>', text)
+    return ('<pre style="white-space:pre-wrap;word-wrap:break-word;'
+            'font:14px/1.5 sans-serif;margin:16px">' + text + "</pre>")
+
+
+def cmd_open(uid):
+    config, imap = connect()
+    try:
+        check(imap.select("INBOX"), "open the inbox")
+        data = check(imap.uid("FETCH", uid, "(X-GM-THRID BODY.PEEK[])"), "fetch")
+        message = next(fetched(data), None)
+        if message is None:
+            raise Failure("network", "That email is gone from the inbox")
+        _, thread, raw = message
+        msg = email.message_from_bytes(raw, policy=email.policy.compat32)
+        name, address = sender(msg)
+        when = sent_at(msg)
+        os.makedirs(CACHE, exist_ok=True)
+        path = os.path.join(CACHE, "%s.json" % uid)
+        with open(path, "w") as f:
+            json.dump({
+                "from": name,
+                "address": address,
+                "subject": header(msg, "Subject") or "(no subject)",
+                "date": when.strftime("%a %b %-d %Y, %H:%M") if when else "",
+                "html": page(msg),
+                "link": gmail_link(config["email"], thread),
+            }, f, ensure_ascii=False)
+        check(imap.uid("STORE", uid, "+FLAGS", "(\\Seen)"), "mark it read")
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+    subprocess.Popen(["/usr/bin/python3", os.path.join(HERE, "viewer.py"), path],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    emit({"ok": True})
+
+
+def cmd_setup():
+    print("omamail: Gmail in the Omarchy bar\n")
+    print("It signs in with a Gmail app password, not your normal password.")
+    print("Make one at https://myaccount.google.com/apppasswords")
+    print("(that page needs 2-Step Verification turned on).\n")
+    try:
+        current = load_config()["email"]
+    except Failure:
+        current = ""
+    prompt = "Gmail address" + (" [%s]" % current if current else "") + ": "
+    address = input(prompt).strip() or current
+    if not address:
+        print("No address given, nothing changed.")
+        return 1
+    password = getpass.getpass("App password (typing is hidden): ").replace(" ", "").strip()
+    if not password:
+        print("No password given, nothing changed.")
+        return 1
+    print("Checking with Gmail...")
+    try:
+        login(address, password).logout()
+    except Failure as e:
+        print("\n" + e.message)
+        if e.kind == "auth":
+            print("Check the address, and that it is an app password rather than your account password.")
+        return 1
+    stored = subprocess.run(
+        ["secret-tool", "store", "--label=omamail " + address, "service", "omamail", "account", address],
+        input=password, text=True)
+    if stored.returncode != 0:
+        print("Could not save the password to the keyring.")
+        return 1
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG, "w") as f:
+        json.dump({"email": address}, f, indent=2)
+        f.write("\n")
+    print("\nDone. The bar will show your unread count within a moment.")
+    return 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ""
+    try:
+        if command == "setup":
+            return cmd_setup()
+        if command == "list":
+            limit = 15
+            if "--limit" in argv:
+                limit = int(argv[argv.index("--limit") + 1])
+            cmd_list(limit)
+            return 0
+        if command == "open" and len(argv) > 2 and argv[2].isdigit():
+            cmd_open(argv[2])
+            return 0
+    except Failure as e:
+        emit({"error": e.kind, "message": e.message})
+        return 1
+    except (OSError, socket.timeout, imaplib.IMAP4.abort) as e:
+        emit({"error": "network", "message": "Lost the connection to Gmail: " + text_of(e)})
+        return 1
+    print(__doc__.strip(), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
