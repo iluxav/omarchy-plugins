@@ -20,5 +20,19 @@
     "category": "Compositor",
     "defaultSection": "left",
     "allowMultiple": false
+  },
+  "sandbox": {
+    "process": [
+      "bash",
+      "omarchy-shell",
+      "python3"
+    ],
+    "shell": [
+      "run"
+    ],
+    "requires": [
+      "quickshell-hyprland",
+      "quickshell-wayland"
+    ]
   }
 }

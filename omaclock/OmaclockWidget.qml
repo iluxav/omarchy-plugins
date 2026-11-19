@@ -1,11 +1,12 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Config.js" as Config
+import "Stats.js" as Stats
 
-// Extra time zones in the bar, meant to sit right after omarchy.clock:
+// Extra time zones and optional system usage, beside omarchy.clock:
 //
 //   Sat 26 Sep 12:41   IL 19:41  ·  NYC 05:41
 //
@@ -29,25 +30,35 @@ BarWidget {
 
   property var config: Config.defaults()
   property string configError: ""
+  property int configRevision: 0
   // One entry per zone, in file order: what the bar shows, and the tooltip.
   property var shown: []
   property var details: []
+  property var statsSample: Stats.parse("")
+  property var previousCpu: null
+  property var cpuUsage: null
+  readonly property bool statsEnabled: root.configError === "" && (root.config.showCpu || root.config.showMemory || root.config.showDisk)
+  readonly property var statsContent: root.formatStats()
 
   readonly property string separator: root.vertical ? "\n" : root.config.separator
   readonly property string displayText: {
     if (root.configError !== "") return "omaclock ⚠"
-    var parts = []
-    for (var i = 0; i < root.shown.length; i++) parts.push(root.shown[i])
-    return parts.join(root.separator)
+    return root.shown.concat(root.statsContent.shown).join(root.separator)
   }
   readonly property string tooltip: root.configError !== ""
     ? "omaclock: " + root.configError + "\nRight-click to edit " + root.configPath
-    : root.details.join("\n")
+    : root.details.concat(root.statsContent.details).join("\n")
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   function loadConfig(source) {
+    root.configRevision++
+    root.shown = []
+    root.details = []
+    root.statsSample = Stats.parse("")
+    root.previousCpu = null
+    root.cpuUsage = null
     try {
       root.config = Config.parse(source)
       root.configError = ""
@@ -60,18 +71,24 @@ BarWidget {
   // Ask `date` for every zone in one go. Zones go in as positional arguments,
   // three per zone (tz, bar format, tooltip format), never as command text.
   function refresh() {
+    root.refreshClock()
+    root.refreshStats()
+  }
+
+  function refreshClock() {
     if (root.configError !== "" || root.config.zones.length === 0) {
       root.shown = []
       root.details = []
       return
     }
+    if (dateProc.running) return
     var args = ["omaclock"]
     for (var i = 0; i < root.config.zones.length; i++) {
       var z = root.config.zones[i]
       args.push(z.tz, z.format, z.tooltipFormat)
     }
     dateProc.command = ["bash", "-c", dateProc.script].concat(args)
-    dateProc.running = false
+    dateProc.revision = root.configRevision
     dateProc.running = true
   }
 
@@ -90,17 +107,96 @@ BarWidget {
   }
 
   function editConfig() {
-    if (root.bar) root.bar.run("omarchy-launch-editor '" + root.configPath + "'")
+    if (root.bar) root.bar.run("omarchy-launch-editor '" + root.configPath.replace(/'/g, "'\\''") + "'")
+  }
+
+  function refreshStats() {
+    if (!root.statsEnabled || statsProc.running) return
+    statsProc.revision = root.configRevision
+    statsProc.command = ["bash", root.pluginDir + "/stats.sh",
+      String(root.config.showCpu), String(root.config.showMemory), String(root.config.showDisk), root.config.diskPath]
+    statsProc.running = true
+  }
+
+  function acceptStats(text) {
+    var sample = Stats.parse(text)
+    root.cpuUsage = Stats.cpuPercent(root.previousCpu, sample.cpu)
+    root.previousCpu = sample.cpu
+    root.statsSample = sample
+  }
+
+  function percent(value) {
+    return value === null ? "--" : Commons.I18n.formatNumber(Math.round(value)) + "%"
+  }
+
+  function size(kib) {
+    var result = Stats.size(kib)
+    return Commons.I18n.formatNumber(result.value, 1) + " " + result.unit
+  }
+
+  function usage(sample, format) {
+    if (!sample) return "--"
+    if (format === "percent") return root.percent(sample.percent)
+    // The collector reports KiB; GB is decimal (1,000,000,000 bytes).
+    var used = Commons.I18n.formatNumber(sample.used * 1024 / 1000000000, 1)
+    var total = Commons.I18n.formatNumber(sample.total * 1024 / 1000000000, 1)
+    var text = used + "/" + total + " GB"
+    return format === "both" ? text + " (" + root.percent(sample.percent) + ")" : text
+  }
+
+  function formatStats() {
+    var shown = [], details = []
+    if (root.config.showCpu) {
+      shown.push("CPU " + root.percent(root.cpuUsage))
+      details.push(strings.t("stats.cpu").arg(root.cpuUsage === null ? strings.t("stats.unavailable") : root.percent(root.cpuUsage)))
+    }
+    if (root.config.showMemory) {
+      var mem = root.statsSample.memory
+      shown.push("RAM " + root.usage(mem, root.config.memoryFormat))
+      details.push(mem ? strings.t("stats.memory").arg(root.size(mem.used)).arg(root.size(mem.total)).arg(root.percent(mem.percent))
+        : strings.t("stats.memoryUnavailable"))
+    }
+    if (root.config.showDisk) {
+      var disk = root.statsSample.disk
+      shown.push("DISK " + root.usage(disk, root.config.diskFormat))
+      details.push(disk ? strings.t("stats.disk").arg(root.config.diskPath).arg(root.size(disk.used)).arg(root.size(disk.total))
+        .arg(root.percent(disk.percent)).arg(root.size(disk.available))
+        : strings.t("stats.diskUnavailable").arg(root.config.diskPath))
+    }
+    return { shown: shown, details: details }
+  }
+
+  Commons.Translations {
+    id: strings
+    directory: Qt.resolvedUrl("i18n")
+  }
+
+  Timer {
+    interval: root.config.statsInterval * 1000
+    running: root.statsEnabled
+    repeat: true
+    onTriggered: root.refreshStats()
+  }
+
+  Process {
+    id: statsProc
+    property int revision: -1
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (statsProc.revision === root.configRevision) root.acceptStats(text)
+    }
+    onExited: if (statsProc.revision !== root.configRevision) Qt.callLater(root.refreshStats)
   }
 
   SystemClock {
     id: minute
     precision: SystemClock.Minutes
-    onDateChanged: root.refresh()
+    onDateChanged: root.refreshClock()
   }
 
   Process {
     id: dateProc
+    property int revision: -1
     // A name with no zoneinfo file would make `date` fall back to UTC without
     // a word, so it is checked first and shown as "??" instead.
     readonly property string script: "while [ $# -ge 3 ]; do\n"
@@ -113,8 +209,9 @@ BarWidget {
       + "done"
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.accept(text)
+      onStreamFinished: if (dateProc.revision === root.configRevision) root.accept(text)
     }
+    onExited: if (dateProc.revision !== root.configRevision) Qt.callLater(root.refreshClock)
   }
 
   FileView {
@@ -136,7 +233,7 @@ BarWidget {
 
   WidgetButton {
     id: button
-    anchors.fill: parent
+    anchors.fill: root
     bar: root.bar
     text: root.displayText
     hasVisualContent: root.displayText !== ""

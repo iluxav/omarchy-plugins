@@ -13,7 +13,8 @@
 // Anything else (anchors, nested lists, multi-line strings) is an error with a
 // line number, rather than something silently misread.
 
-var TOP_KEYS = ["separator", "format", "tooltipFormat", "zones"]
+var TOP_KEYS = ["separator", "format", "tooltipFormat", "zones",
+  "showCpu", "showMemory", "showDisk", "memoryFormat", "diskFormat", "statsInterval", "diskPath"]
 var ZONE_KEYS = ["label", "tz", "format"]
 
 // What the tz goes through before it can reach a shell command line: IANA
@@ -26,6 +27,13 @@ function defaults() {
     separator: "  ·  ",
     format: "%H:%M",
     tooltipFormat: "%A %d %B %H:%M (%Z)",
+    showCpu: false,
+    showMemory: false,
+    showDisk: false,
+    memoryFormat: "percent",
+    diskFormat: "percent",
+    statsInterval: 5,
+    diskPath: "/",
     zones: []
   }
 }
@@ -122,6 +130,28 @@ function setZoneKey(zone, key, valueText, lineNo) {
   zone[key] = scalar(valueText, lineNo)
 }
 
+function setTopKey(cfg, key, valueText, lineNo) {
+  var value = scalar(valueText, lineNo)
+  if (key === "showCpu" || key === "showMemory" || key === "showDisk") {
+    if (value !== "true" && value !== "false") fail(lineNo, key + " must be true or false")
+    cfg[key] = value === "true"
+  } else if (key === "memoryFormat" || key === "diskFormat") {
+    if (["percent", "used-total", "both"].indexOf(value) === -1)
+      fail(lineNo, key + " must be percent, used-total or both")
+    cfg[key] = value
+  } else if (key === "statsInterval") {
+    if (!/^[0-9]+$/.test(value) || Number(value) < 1 || Number(value) > 3600)
+      fail(lineNo, "statsInterval must be a whole number of seconds from 1 to 3600")
+    cfg[key] = Number(value)
+  } else if (key === "diskPath") {
+    if (value.charAt(0) !== "/" || /[\x00-\x1f\x7f]/.test(value))
+      fail(lineNo, "diskPath must be an absolute path, such as / or /home")
+    cfg[key] = value
+  } else {
+    cfg[key] = value
+  }
+}
+
 function finishZone(zone, lineNo, top) {
   if (!zone.tz) fail(zone.line, "zone has no tz")
   if (!TZ_PATTERN.test(zone.tz)) fail(zone.line, "\"" + zone.tz + "\" is not a time zone name (try Asia/Jerusalem)")
@@ -165,7 +195,7 @@ function parse(source) {
         inZones = true
       } else {
         inZones = false
-        cfg[top[0]] = scalar(top[1], lineNo)
+        setTopKey(cfg, top[0], top[1], lineNo)
       }
       continue
     }

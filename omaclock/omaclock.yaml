@@ -1,4 +1,4 @@
-# omaclock: which extra time zones the bar shows.
+# omaclock: extra time zones and optional system usage in the bar.
 #
 # Copied to ~/.config/omaclock/omaclock.yaml the first time the widget loads.
 # Edit that copy; the bar picks up changes as soon as you save.
@@ -6,9 +6,16 @@
 #
 # Top level (all optional):
 #
-#   separator       text between zones                     default "  ·  "
+#   separator       text between zones and usage readings  default "  ·  "
 #   format          time format for every zone             default "%H:%M"
 #   tooltipFormat   what the hover tooltip shows           default "%A %d %B %H:%M (%Z)"
+#   showCpu         show total CPU usage                   default false
+#   showMemory      show RAM usage                         default false
+#   showDisk        show filesystem space used             default false
+#   memoryFormat    percent, used-total or both             default "percent"
+#   diskFormat      percent, used-total or both             default "percent"
+#   statsInterval   seconds between usage samples (1–3600)  default 5
+#   diskPath        absolute path on the filesystem        default "/"
 #
 # Each entry under `zones`:
 #
@@ -25,6 +32,16 @@
 
 separator: "  ·  "
 format: "%H:%M"
+
+# Uncomment to show system usage after the time zones. Hover for amounts.
+# showCpu: true
+# showMemory: true
+# showDisk: true
+# memoryFormat: both   # e.g. RAM 16.0/64.0 GB (25%)
+# diskFormat: both     # e.g. DISK 250.0/1000.0 GB (25%)
+# statsInterval: 5
+# diskPath: "/"
+# Use zones: [] for system usage without time zones.
 
 zones:
   - label: IL

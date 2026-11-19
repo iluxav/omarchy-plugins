@@ -1,0 +1,8 @@
+{
+  "stats.cpu": "CPU: %1 across all cores",
+  "stats.memory": "Memory: %1 / %2 used (%3)",
+  "stats.disk": "Disk %1: %2 / %3 used (%4), %5 available",
+  "stats.unavailable": "Unavailable",
+  "stats.memoryUnavailable": "Memory: unavailable",
+  "stats.diskUnavailable": "Disk %1: unavailable (check diskPath)"
+}

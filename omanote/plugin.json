@@ -1,0 +1,17 @@
+{
+  "options": [
+    {
+      "key": "chord",
+      "type": "chord",
+      "label": "Open the notes popup",
+      "default": "SUPER + N"
+    },
+    {
+      "key": "capture",
+      "type": "chord",
+      "label": "Quick note into the inbox",
+      "default": null,
+      "optional": true
+    }
+  ]
+}
